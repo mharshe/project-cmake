@@ -179,7 +179,7 @@ at the root of the project's directory."
                     (project-root (project-current t))))
 
 (defun project-cmake-source-directory ()
-  "Return the full path to the project's source (or root) directory"
+  "Return the full path to the project's source (or root) directory."
   (expand-file-name (project-root (project-current t))))
 
 
@@ -433,6 +433,7 @@ mingw64, mingw32 or ucrt64."
          (compiler-names (mapcar #'car compiler-alist))
 
          (all-compilers (delq nil (mapcar 'executable-find compiler-names))))
+    (message "All compilers : %S" all-compilers)
     (when (> (length all-compilers) 1)
       ;; If there are multiple compilers, create specialized kits
       (dolist (compiler all-compilers)
@@ -451,7 +452,7 @@ mingw64, mingw32 or ucrt64."
 										 exec-find)
   (cl-labels ((kit-exec-find
 			   (name)
-			   (funcall (or exec-find 'executable-find) name)))
+               (executable-find name t)))
 	`(,(intern kit-name)
       ,@(if (kit-exec-find "ninja")
 			`(:cmake-generator "Ninja")
@@ -498,19 +499,20 @@ mingw64, mingw32 or ucrt64."
     (setq project-cmake-kits all-kits)))
 
 (defun project-cmake-kit-convert-path (path)
+  "Convert path"
   (funcall (or (project-cmake-kit-value :convert-path)
 			   'identity)
 		   path))
 
 (defun project-cmake-kit-build-directory ()
   "Return the path for the project's build directory as understood by the build kit."
-  (project-cmake-kit-convert-path
-   (project-cmake-build-directory)))
+  (file-local-name (project-cmake-kit-convert-path
+   (project-cmake-build-directory))))
 
 (defun project-cmake-kit-source-directory ()
   "Return the path for the project's source directory as understood by the build kit."
-  (project-cmake-kit-convert-path
-   (project-cmake-source-directory)))
+  (file-local-name (project-cmake-kit-convert-path
+   (project-cmake-source-directory))))
 
 (defun project-cmake-kit-name ()
   "Return the symbol for the selected kit."
@@ -526,6 +528,7 @@ selected kit, or NIL if it does not exist."
 
 (defun project-cmake-kit-value (keyword &optional kit default)
   (let* ((plist (cdr (project-cmake-kit kit))))
+    (message "kit members: %S" plist)
     (if (plist-member plist keyword)
         (plist-get plist keyword)
       default)))
@@ -560,6 +563,7 @@ selected kit, or NIL if it does not exist."
               compilation-buffer-name-function))
 		 (default-directory (project-cmake-source-directory)))
 	(message "compile-command: %S" compile-command)
+    (message "command-list : %S" command-list)
 	(if interactive-p
 		(call-interactively #'compile)
 	  (compile compile-command))))
@@ -607,7 +611,7 @@ other environment flags."
   (interactive)
   (require 'eglot)
   (add-to-list 'eglot-server-programs
-			   '((c++-mode c-mode) . project-cmake-eglot-clangd-command-line))
+			   '((c++-mode c-mode c++-ts-mode c-ts-mode) . project-cmake-eglot-clangd-command-line))
   (advice-add 'eglot-ensure :around 'project-cmake-eglot-ensure-wrapper))
 
 
@@ -805,6 +809,27 @@ scratch, preserving the existing configuration."
         (pop-to-buffer shell-buffer (bound-and-true-p display-comint-buffer-action))
       (shell (or shell-buffer default-project-shell-name)))))
 
+(defun project-cmake-eshell ()
+  "Run a shell which is appropriate for the given compilation kit."
+  (interactive)
+  (require 'comint)
+  (let ((default-directory (project-cmake-source-directory))
+		(shell-launcher (project-cmake-kit-value :shell)))
+	(if shell-launcher
+		(funcall shell-launcher 'project-eshell-fix)
+	  (project-eshell-fix))))
+
+(defun project-eshell-fix ()
+  "Fixed version for project-eshell"
+  (interactive)
+  (let* ((default-directory (project-cmake-source-directory))
+         (eshell-buffer-name (project-prefixed-buffer-name "eshell"))
+         (default-project-shell-name (project-prefixed-buffer-name "eshell"))
+         (shell-buffer (get-buffer default-project-shell-name)))
+	(if (get-buffer shell-buffer)
+        (pop-to-buffer shell-buffer)
+      (eshell (or shell-buffer default-project-shell-name)))))
+
 (defun project-cmake-select-kit (kit-name)
   "Select a kit for this project."
   (interactive
@@ -850,8 +875,8 @@ on the Windows platform."
   (let* ((default-directory (project-cmake-source-directory))
          (buffer-name (format "*Run Target %s*" default-directory))
          (compilation-buffer-name-function (lambda (mode) buffer-name))
-         (target (project-cmake-kit-convert-path
-                  (project-cmake-api-choose-executable-file)))
+         (target (file-local-name (project-cmake-kit-convert-path
+                  (project-cmake-api-choose-executable-file))))
          (process-environment (project-cmake-kit-debug-environment))
          )
     (compile (project-cmake-kit-wrap (list target)))))
